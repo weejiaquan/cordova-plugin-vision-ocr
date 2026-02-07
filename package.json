@@ -1,0 +1,19 @@
+{
+  "name": "cordova-plugin-vision-ocr",
+  "version": "1.0.0",
+  "description": "Apple Vision framework OCR text recognition for Cordova",
+  "cordova": {
+    "id": "cordova-plugin-vision-ocr",
+    "platforms": [
+      "ios"
+    ]
+  },
+  "keywords": [
+    "ecosystem:cordova",
+    "cordova-ios",
+    "ocr",
+    "vision"
+  ],
+  "author": "Auphan",
+  "license": "ISC"
+}

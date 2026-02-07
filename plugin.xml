@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='utf-8'?>
+<plugin id="cordova-plugin-vision-ocr" version="1.0.0" xmlns="http://apache.org/cordova/ns/plugins/1.0" xmlns:android="http://schemas.android.com/apk/res/android">
+    <name>VisionOCR</name>
+    <js-module name="VisionOCR" src="www/VisionOCR.js">
+        <clobbers target="window.VisionOCR" />
+    </js-module>
+    <platform name="ios">
+        <config-file parent="/*" target="config.xml">
+            <feature name="VisionOCR">
+                <param name="ios-package" value="VisionOCR" />
+            </feature>
+        </config-file>
+        <source-file src="src/ios/VisionOCR.swift" />
+        <dependency id="cordova-plugin-add-swift-support" version="2.0.2" />
+        <framework src="Vision.framework" />
+    </platform>
+</plugin>
