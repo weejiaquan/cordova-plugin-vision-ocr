@@ -1,3 +1,4 @@
+cordova.define("cordova-plugin-vision-ocr.VisionOCR", function(require, exports, module) {
 var exec = require('cordova/exec');
 
 var VisionOCR = function () {};
@@ -8,3 +9,4 @@ VisionOCR.recognizeText = function (base64String, callback, failure, options) {
 };
 
 module.exports = VisionOCR;
+});
