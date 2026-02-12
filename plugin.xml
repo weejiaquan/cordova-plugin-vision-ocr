@@ -13,5 +13,6 @@
         <source-file src="src/ios/VisionOCR.swift" />
         <dependency id="cordova-plugin-add-swift-support" version="2.0.2" />
         <framework src="Vision.framework" />
+        <framework src="AVFoundation.framework" />
     </platform>
 </plugin>
