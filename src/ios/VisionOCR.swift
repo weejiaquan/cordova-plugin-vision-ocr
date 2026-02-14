@@ -128,24 +128,20 @@ import AVFoundation
     // MARK: - Shared camera setup
 
     private func _currentVideoOrientation() -> AVCaptureVideoOrientation {
-        switch UIDevice.current.orientation {
-        case .portrait:            return .portrait
-        case .portraitUpsideDown:   return .portraitUpsideDown
-        case .landscapeLeft:        return .landscapeRight
-        case .landscapeRight:       return .landscapeLeft
-        default:
-            // Device orientation is .unknown/.faceUp/.faceDown (common at launch).
-            // Fall back to the window scene's interface orientation.
-            if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
-                switch scene.interfaceOrientation {
-                case .landscapeLeft:        return .landscapeRight
-                case .landscapeRight:       return .landscapeLeft
-                case .portraitUpsideDown:   return .portraitUpsideDown
-                default:                    return .portrait
-                }
+        // Use the actual interface orientation (what the screen displays),
+        // NOT UIDevice.current.orientation which is raw accelerometer data.
+        // When the phone is nearly flat (e.g. face-down scanning a card),
+        // the device orientation flips wildly between landscape-left and
+        // landscape-right, but the interface stays stable.
+        if let scene = UIApplication.shared.connectedScenes.first as? UIWindowScene {
+            switch scene.interfaceOrientation {
+            case .landscapeLeft:        return .landscapeLeft
+            case .landscapeRight:       return .landscapeRight
+            case .portraitUpsideDown:   return .portraitUpsideDown
+            default:                    return .portrait
             }
-            return .portrait
         }
+        return .portrait
     }
 
     private func _syncOutputOrientation() {
