@@ -27,6 +27,9 @@ import AVFoundation
     private var currentCameraPosition: AVCaptureDevice.Position = .back
     private var isTorchOn: Bool = false
     private var lastZoomFactor: CGFloat = 1.0
+    private let cameraSessionQueue = DispatchQueue(label: "com.auphansoftware.visionocr.session")
+    private let ciContext = CIContext()
+    private let frameLock = NSLock()
 
     // Native overlay state
     private var cameraOverlay: UIView?
@@ -49,6 +52,8 @@ import AVFoundation
 
     // MARK: - Orientation observer
 
+    private var orientationWorkItem: DispatchWorkItem?
+
     private func _startOrientationObserver() {
         UIDevice.current.beginGeneratingDeviceOrientationNotifications()
         NotificationCenter.default.addObserver(
@@ -62,24 +67,34 @@ import AVFoundation
     private func _stopOrientationObserver() {
         NotificationCenter.default.removeObserver(self, name: UIDevice.orientationDidChangeNotification, object: nil)
         UIDevice.current.endGeneratingDeviceOrientationNotifications()
+        orientationWorkItem?.cancel()
+        orientationWorkItem = nil
     }
 
     @objc private func _onOrientationChanged() {
-        let orientation = _currentVideoOrientation()
+        // Cancel any pending orientation update
+        orientationWorkItem?.cancel()
 
-        // Update preview layer connection orientation
-        DispatchQueue.main.async {
-            if let connection = self.previewLayer?.connection, connection.isVideoOrientationSupported {
-                connection.videoOrientation = orientation
+        // Debounce: wait for UI rotation animation to complete before syncing camera.
+        // UIDevice.orientationDidChangeNotification fires from the accelerometer
+        // BEFORE the interface actually rotates, causing the camera to flip early.
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self = self else { return }
+            let orientation = self._currentVideoOrientation()
+
+            DispatchQueue.main.async {
+                if let connection = self.previewLayer?.connection, connection.isVideoOrientationSupported {
+                    connection.videoOrientation = orientation
+                }
+                if let previewLayer = self.previewLayer, let superLayer = previewLayer.superlayer {
+                    previewLayer.frame = superLayer.bounds
+                }
             }
-            // Update preview layer frame to match new bounds
-            if let previewLayer = self.previewLayer, let superLayer = previewLayer.superlayer {
-                previewLayer.frame = superLayer.bounds
-            }
+
+            self._syncOutputOrientation()
         }
-
-        // Update output connections so captured frames are oriented correctly
-        _syncOutputOrientation()
+        orientationWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: workItem)
     }
 
     // MARK: - Image helpers
@@ -165,6 +180,14 @@ import AVFoundation
     }
 
     private func _setupCamera() -> Bool {
+        // Stop any existing session before creating a new one
+        if let oldSession = self.captureSession {
+            self.captureSession = nil
+            cameraSessionQueue.sync {
+                oldSession.stopRunning()
+            }
+        }
+
         let session = AVCaptureSession()
         session.sessionPreset = .hd1920x1080
 
@@ -209,25 +232,26 @@ import AVFoundation
     private func _teardownCamera() {
         _stopOrientationObserver()
 
-        // Turn off torch before stopping session
-        if isTorchOn {
-            if let device = _currentCaptureDevice(), device.hasTorch {
-                do {
-                    try device.lockForConfiguration()
-                    device.torchMode = .off
-                    device.unlockForConfiguration()
-                } catch { }
-            }
-        }
+        let session = self.captureSession
+        let savedUiMode = self.uiMode
 
-        self.captureSession?.stopRunning()
+        // Clear references immediately so no new work starts
+        self.captureSession = nil
+        frameLock.lock()
+        self.latestFrame = nil
+        frameLock.unlock()
+        self.isTorchOn = false
+        self.lastZoomFactor = 1.0
+        self.currentCameraPosition = .back
+        self.cameraMode = ""
+        self.uiMode = .none
 
+        // Remove UI overlay immediately on main thread (don't wait for session stop)
         DispatchQueue.main.async {
             self.previewLayer?.removeFromSuperlayer()
             self.previewLayer = nil
 
-            // Mode-specific cleanup
-            if self.uiMode == .nativeOverlay {
+            if savedUiMode == .nativeOverlay {
                 self.cameraOverlay?.removeFromSuperview()
                 self.cameraOverlay = nil
                 self.statusLabel = nil
@@ -235,7 +259,7 @@ import AVFoundation
                 self.torchBtn = nil
                 self.focusRingView?.removeFromSuperview()
                 self.focusRingView = nil
-            } else if self.uiMode == .behindWebview {
+            } else if savedUiMode == .behindWebview {
                 if let wv = self.webView {
                     wv.isOpaque = self.savedWebViewOpaque
                     wv.backgroundColor = self.savedWebViewBgColor
@@ -244,13 +268,20 @@ import AVFoundation
             }
         }
 
-        self.captureSession = nil
-        self.latestFrame = nil
-        self.isTorchOn = false
-        self.lastZoomFactor = 1.0
-        self.currentCameraPosition = .back
-        self.cameraMode = ""
-        self.uiMode = .none
+        // Stop session synchronously to prevent races with beginConfiguration
+        if let session = session {
+            cameraSessionQueue.sync {
+                // Turn off torch before stopping
+                if let input = session.inputs.first as? AVCaptureDeviceInput, input.device.hasTorch {
+                    do {
+                        try input.device.lockForConfiguration()
+                        input.device.torchMode = .off
+                        input.device.unlockForConfiguration()
+                    } catch { }
+                }
+                session.stopRunning()
+            }
+        }
     }
 
     // MARK: - AVCaptureVideoDataOutputSampleBufferDelegate
@@ -258,9 +289,11 @@ import AVFoundation
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         guard let pixelBuffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         let ciImage = CIImage(cvPixelBuffer: pixelBuffer)
-        let context = CIContext()
-        guard let cgImage = context.createCGImage(ciImage, from: ciImage.extent) else { return }
-        self.latestFrame = UIImage(cgImage: cgImage)
+        guard let cgImage = ciContext.createCGImage(ciImage, from: ciImage.extent) else { return }
+        let frame = UIImage(cgImage: cgImage)
+        frameLock.lock()
+        self.latestFrame = frame
+        frameLock.unlock()
     }
 
     // =====================================================================
@@ -406,7 +439,7 @@ import AVFoundation
 
             self._startOrientationObserver()
 
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.cameraSessionQueue.async {
                 session.startRunning()
             }
         }
@@ -417,9 +450,20 @@ import AVFoundation
     @objc private func onCaptureTapped() {
         _syncOutputOrientation()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard let frame = self.latestFrame,
-                  let callbackId = self.capturePhotoCallbackId else { return }
-            let image = frame
+            guard let callbackId = self.capturePhotoCallbackId else { return }
+
+            self.frameLock.lock()
+            let frame = self.latestFrame
+            self.frameLock.unlock()
+
+            guard let image = frame else {
+                self._teardownCamera()
+                let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "No frame captured")
+                self.commandDelegate!.send(result, callbackId: callbackId)
+                self.capturePhotoCallbackId = nil
+                self.capturePhotoErrorCallbackId = nil
+                return
+            }
             self._teardownCamera()
             self.commandDelegate!.run(inBackground: {
                 if let base64 = self.imageToBase64(image) {
@@ -647,7 +691,7 @@ import AVFoundation
 
             self._startOrientationObserver()
 
-            DispatchQueue.global(qos: .userInitiated).async {
+            self.cameraSessionQueue.async {
                 session.startRunning()
 
                 DispatchQueue.main.async {
@@ -706,20 +750,22 @@ import AVFoundation
         guard let newDevice = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: newPosition),
               let newInput = try? AVCaptureDeviceInput(device: newDevice) else { return }
 
-        session.beginConfiguration()
-        if let currentInput = session.inputs.first as? AVCaptureDeviceInput {
-            session.removeInput(currentInput)
-        }
-        if session.canAddInput(newInput) {
-            session.addInput(newInput)
-            currentCameraPosition = newPosition
-        }
-        for output in session.outputs {
-            if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
-                connection.videoOrientation = _currentVideoOrientation()
+        cameraSessionQueue.sync {
+            session.beginConfiguration()
+            defer { session.commitConfiguration() }
+            if let currentInput = session.inputs.first as? AVCaptureDeviceInput {
+                session.removeInput(currentInput)
+            }
+            if session.canAddInput(newInput) {
+                session.addInput(newInput)
+            }
+            for output in session.outputs {
+                if let connection = output.connection(with: .video), connection.isVideoOrientationSupported {
+                    connection.videoOrientation = self._currentVideoOrientation()
+                }
             }
         }
-        session.commitConfiguration()
+        currentCameraPosition = newPosition
 
         // Reset zoom to 1x
         do {
@@ -803,7 +849,11 @@ import AVFoundation
     func captureFrame(_ command: CDVInvokedUrlCommand) {
         _syncOutputOrientation()
         self.commandDelegate!.run(inBackground: {
-            guard let frame = self.latestFrame else {
+            self.frameLock.lock()
+            let currentFrame = self.latestFrame
+            self.frameLock.unlock()
+
+            guard let frame = currentFrame else {
                 let result = CDVPluginResult(status: CDVCommandStatus_ERROR, messageAs: "No frame available")
                 self.commandDelegate!.send(result, callbackId: command.callbackId)
                 return
@@ -826,6 +876,7 @@ import AVFoundation
 
         let levelStr = options["level"] as? String ?? "accurate"
         let maxSize = options["maxSize"] as? CGFloat ?? 0
+        let minConfidence = options["minConfidence"] as? Float ?? 0.5
 
         if base64String.isEmpty {
             let pluginResult = CDVPluginResult(
@@ -882,7 +933,7 @@ import AVFoundation
 
                 var blocks: [[String: Any]] = []
                 for observation in observations {
-                    if let topCandidate = observation.topCandidates(1).first {
+                    if let topCandidate = observation.topCandidates(1).first, topCandidate.confidence >= minConfidence {
                         let box = observation.boundingBox
                         blocks.append([
                             "text": topCandidate.string,

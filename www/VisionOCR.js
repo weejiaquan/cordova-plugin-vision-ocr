@@ -69,7 +69,7 @@ VisionOCR.captureFrame = function (callback, failure) {
 
 // ---- OCR ----
 
-// options: { level: "fast"|"accurate", maxSize: 1920 }
+// options: { level: "fast"|"accurate", maxSize: 1920, minConfidence: 0.5 }
 VisionOCR.recognizeText = function (base64String, callback, failure, options) {
     return exec(callback, failure, "VisionOCR", "recognizeText", [base64String, options || {}]);
 };

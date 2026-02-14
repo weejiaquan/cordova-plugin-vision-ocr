@@ -1,18 +1,22 @@
 {
   "name": "cordova-plugin-vision-ocr",
   "version": "1.0.0",
-  "description": "Apple Vision framework OCR text recognition for Cordova",
+  "description": "On-device OCR text recognition with live camera preview for Cordova (iOS + Android)",
   "cordova": {
     "id": "cordova-plugin-vision-ocr",
     "platforms": [
-      "ios"
+      "ios",
+      "android"
     ]
   },
   "keywords": [
     "ecosystem:cordova",
     "cordova-ios",
+    "cordova-android",
     "ocr",
-    "vision"
+    "vision",
+    "mlkit",
+    "text-recognition"
   ],
   "author": "Auphan",
   "license": "ISC"

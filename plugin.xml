@@ -15,4 +15,18 @@
         <framework src="Vision.framework" />
         <framework src="AVFoundation.framework" />
     </platform>
+    <platform name="android">
+        <config-file parent="/*" target="res/xml/config.xml">
+            <feature name="VisionOCR">
+                <param name="android-package" value="com.auphansoftware.cordova.visionocr.VisionOCR" />
+            </feature>
+        </config-file>
+        <config-file target="AndroidManifest.xml" parent="/*">
+            <uses-permission android:name="android.permission.CAMERA" android:required="false" />
+            <uses-feature android:name="android.hardware.camera" android:required="false" />
+            <uses-feature android:name="android.hardware.camera.front" android:required="false" />
+        </config-file>
+        <source-file src="src/android/VisionOCR.java" target-dir="src/com/auphansoftware/cordova/visionocr" />
+        <framework src="src/android/visionocr.gradle" custom="true" type="gradleReference" />
+    </platform>
 </plugin>
